@@ -441,6 +441,8 @@ body.mc-page { font-size: 14px; padding: 16px; }
 .verdict b { color: var(--tone); }
 .timer { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--mc-deep); }
 .timer.is-low { color: var(--bad); }
+.nav-card { padding: 12px 16px; }
+.nav-card summary { cursor: pointer; font-weight: 700; color: var(--mc-strong); min-height: 28px; display: flex; align-items: center; }
 .nav-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; margin-top: 8px; max-height: 260px; overflow: auto; padding: 2px; }
 .nav-n { min-height: 40px; border-radius: 8px; border: 1px solid var(--mc-border); background: var(--mc-surface); color: var(--mc-text); font: 600 12px var(--mono); cursor: pointer; padding: 0; }
 .nav-n.is-ans { background: var(--mc-soft); border-color: var(--mc-accent); color: var(--mc-deep); }
@@ -676,6 +678,7 @@ function renderQuiz() {
     ${S.endAt && !S.done ? '<span class="timer" id="timer"></span>' : ''}
   </div>
   <div class="bar" role="img" aria-label="Đã trả lời ${answered}/${total}"><i style="width:${answered / total * 100}%;background:var(--mc-accent)"></i></div>
+  <details class="mc-card nav-card" id="navd" ${S.navOpen ? 'open' : ''}><summary>Danh sách câu (${answered}/${total} đã trả lời)</summary><div class="nav-grid" id="grid">${grid}</div></details>
   <section class="mc-card studio-card"><div class="studio-body">
     <div class="q-head">
       <div><p class="eyebrow">Chương ${CH[q.c][0]} · Câu ${q.n}</p></div>
@@ -692,7 +695,6 @@ function renderQuiz() {
     </div>
     ${isExam && !S.done ? '<div class="btn-row"><button class="mc-btn mc-btn--ok grow" type="button" id="submit">Nộp bài</button></div>' : ''}
     ${S.mode === 'practice' ? '<div class="btn-row"><button class="mc-btn mc-btn--sm" type="button" id="finish">Kết thúc và xem kết quả</button></div>' : ''}
-    <details class="proof" id="navd" ${S.navOpen ? 'open' : ''}><summary>Danh sách câu (${answered}/${total} đã trả lời)</summary><div class="nav-grid" id="grid">${grid}</div></details>
   </div></section>`;
   $('#home').onclick = () => { if (!S.done && S.mode === 'exam' && !confirm('Thoát sẽ hủy bài thi đang làm. Thoát?')) return; clearInterval(timerId); view = 'home'; render(true); };
   $('#star').onclick = () => { store.mark[q.n] = !store.mark[q.n]; save(); render(); };
