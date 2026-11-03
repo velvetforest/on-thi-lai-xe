@@ -483,10 +483,7 @@ const CH = [
   ['VI', 'Giải thế sa hình và kỹ năng xử lý tình huống giao thông']
 ];
 const KEY = 'lx600-v1';
-/* Địa chỉ máy chủ đồng bộ (Firebase Realtime Database dạng https://TEN-DU-AN-default-rtdb.firebaseio.com).
-   Để trống thì nhập trong ô "Đồng bộ" trên trang chủ (lưu theo từng thiết bị). */
-const SYNC_URL = '';
-let store = { res: {}, mark: {}, ts: { r: {}, m: {} }, resetAt: 0, theme: 'dark', code: '', url: '', sess: null, prefs: null };
+let store = { res: {}, mark: {}, ts: { r: {}, m: {} }, resetAt: 0, theme: 'dark', code: '', sess: null, prefs: null };
 try { const s = localStorage.getItem(KEY); if (s) store = Object.assign(store, JSON.parse(s)); } catch (e) {}
 store.ts = store.ts || {}; store.ts.r = store.ts.r || {}; store.ts.m = store.ts.m || {};
 let saveFail = false;
@@ -599,13 +596,12 @@ function renderHome() {
 
   <section class="mc-card studio-card"><div class="studio-body">
     <h2 class="sec-h">Đồng bộ giữa các thiết bị</h2>
-    <p class="note">Nhập cùng một mã 2 chữ số trên mỗi thiết bị để dùng chung kết quả và đánh dấu ★. Không có mật khẩu: ai nhập cùng mã sẽ thấy và ghi đè dữ liệu của bạn.</p>
+    <p class="note">Nhập cùng một mã 2 chữ số trên mỗi thiết bị, mở trang cùng lúc để hai máy nối trực tiếp với nhau và dùng chung kết quả, đánh dấu ★. Cần có Internet khi đồng bộ. Không có mật khẩu: ai nhập cùng mã cũng nối được.</p>
     <div class="field-row">
       <input class="mc-field sync-code" id="scode" inputmode="numeric" maxlength="2" pattern="[0-9]*" placeholder="00" aria-label="Mã đồng bộ 2 chữ số" autocomplete="off">
       <button class="mc-btn mc-btn--primary" type="button" id="sconn">${store.code ? 'Đồng bộ ngay' : 'Kết nối'}</button>
       ${store.code ? '<button class="mc-btn" type="button" id="sdis">Ngắt</button>' : ''}
     </div>
-    ${SYNC_URL ? '' : '<details class="picker"><summary>Địa chỉ máy chủ</summary><input class="mc-field" id="surl" type="url" placeholder="https://…firebaseio.com" autocomplete="off"></details>'}
     <p class="sync-st" id="syncst"></p>
   </div></section>
 
@@ -617,13 +613,12 @@ function renderHome() {
   </div></section>`;
   const rb = $('#resume'); if (rb) { rb.onclick = resumeSession; $('#drop').onclick = () => { store.sess = null; S = null; save(); renderHome(); }; }
   $('#scode').value = store.code;
-  const su = $('#surl'); if (su) su.value = store.url;
   $('#sconn').onclick = () => {
     const c = $('#scode').value.trim();
     if (!/^\d{2}$/.test(c)) { setSyncMsg('Mã phải gồm đúng 2 chữ số.', 'bad'); return; }
-    store.code = c; if (su) store.url = su.value.trim(); save(); $('#sconn').textContent = 'Đồng bộ ngay'; sync(true);
+    store.code = c; save(); $('#sconn').textContent = 'Đồng bộ ngay'; sync(true);
   };
-  const sd = $('#sdis'); if (sd) sd.onclick = () => { store.code = ''; save(); renderHome(); };
+  const sd = $('#sdis'); if (sd) sd.onclick = () => { store.code = ''; save(); stopPeer(); syncMsg = null; renderHome(); };
   showSyncMsg();
   $('#filter').value = P.filter; $('#shuf').checked = P.shuffle; $('#exn').value = P.exN; $('#exm').value = P.exMin;
   const upd = () => { const n = pool().length; $('#cnt').textContent = `${n} câu thỏa điều kiện.`; $('#go').disabled = !n; $('#exam').disabled = !pool('all').length; };
@@ -829,14 +824,13 @@ document.addEventListener('keydown', (e) => {
 $('#lb').onclick = () => $('#lb').close();
 
 /* ---------- sync ---------- */
-let syncMsg = null, syncBusy = false, syncAgain = false, syncTimer = 0;
+let syncMsg = null;
 function setSyncMsg(t, kind) { syncMsg = { t, kind }; showSyncMsg(); }
 function showSyncMsg() {
   const el = $('#syncst'); if (!el) return;
   const m = syncMsg || (store.code ? { t: `Đang dùng mã ${store.code}.`, kind: '' } : { t: 'Chưa kết nối.', kind: '' });
   el.textContent = m.t; el.className = 'sync-st' + (m.kind ? ' is-' + m.kind : '');
 }
-const syncBase = () => (SYNC_URL || store.url || '').trim().replace(/\/+$/, '');
 function mergeRemote(r) {
   const rt = r.ts || {}, reset = Math.max(store.resetAt || 0, +r.resetAt || 0);
   let changed = reset !== (store.resetAt || 0);
@@ -855,39 +849,76 @@ function mergeRemote(r) {
   }
   return changed;
 }
-async function sync(manual) {
-  if (!store.code) return;
-  const base = syncBase();
-  if (!base) { if (manual) setSyncMsg('Chưa có địa chỉ máy chủ đồng bộ.', 'bad'); return; }
-  if (syncBusy) { syncAgain = true; return; }
-  syncBusy = true;
-  const url = `${base}/lx600/${store.code}.json`;
-  try {
-    if (manual) setSyncMsg('Đang đồng bộ…', '');
-    const g = await fetch(url, { cache: 'no-store' });
-    if (!g.ok) throw new Error('GET ' + g.status);
-    const body = await g.json();
-    let changed = false;
-    if (body && typeof body.d === 'string') { try { changed = mergeRemote(JSON.parse(body.d)); } catch (e) {} }
-    const d = JSON.stringify({ res: store.res, mark: store.mark, ts: store.ts, resetAt: store.resetAt });
-    if (!body || body.d !== d) {
-      const p = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, t: Date.now() }) });
-      if (!p.ok) throw new Error('PUT ' + p.status);
-    }
-    save();
-    const n = Object.keys(store.res).length;
-    setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · ${n} câu đã làm.`, 'ok');
-    if (changed && view === 'home' && !document.activeElement.matches('input,select')) renderHome();
-  } catch (e) {
-    setSyncMsg('Không đồng bộ được (kiểm tra mạng hoặc địa chỉ máy chủ). Dữ liệu vẫn được lưu trên máy này.', 'bad');
-  } finally {
-    syncBusy = false;
-    if (syncAgain) { syncAgain = false; syncSoon(); }
-  }
+const snapshot = () => JSON.stringify({ res: store.res, mark: store.mark, ts: store.ts, resetAt: store.resetAt });
+let peer = null, gen = 0, conns = new Set(), retryT = 0, libP = null, isClient = false;
+const loadPeerLib = () => libP || (libP = new Promise((ok, no) => {
+  if (window.Peer) return ok();
+  const el = document.createElement('script');
+  el.src = 'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js';
+  el.onload = ok; el.onerror = () => { libP = null; no(new Error('lib')); };
+  document.head.appendChild(el);
+}));
+function stopPeer() {
+  gen++; clearTimeout(retryT);
+  conns.forEach((c) => { try { c.close(); } catch (e) {} }); conns.clear();
+  if (peer) { try { peer.destroy(); } catch (e) {} peer = null; }
 }
-function syncSoon() { if (!store.code) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(false), 1500); }
+const retry = (ms) => { clearTimeout(retryT); const g = gen; retryT = setTimeout(() => { if (g === gen && store.code) startPeer(); }, ms); };
+function sendTo(c) { if (c.open) c.send({ d: snapshot() }); }
+function bindConn(c, g) {
+  c.on('open', () => {
+    if (g !== gen) return;
+    conns.add(c); setSyncMsg(`Đã nối với thiết bị khác (mã ${store.code}).`, 'ok'); sendTo(c);
+  });
+  c.on('data', (m) => {
+    if (g !== gen || !m || typeof m.d !== 'string') return;
+    let changed = false;
+    try { changed = mergeRemote(JSON.parse(m.d)); } catch (e) { return; }
+    save();
+    setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · ${Object.keys(store.res).length} câu đã làm.`, 'ok');
+    if (changed && view === 'home' && !document.activeElement.matches('input,select')) renderHome();
+    if (snapshot() !== m.d) sendTo(c);
+  });
+  const gone = () => {
+    conns.delete(c);
+    if (g !== gen || conns.size) return;
+    setSyncMsg('Đang chờ thiết bị kia mở trang…', '');
+    if (isClient) retry(2000);
+  };
+  c.on('close', gone); c.on('error', gone);
+}
+async function startPeer() {
+  stopPeer();
+  const code = store.code; if (!code) return;
+  const g = gen, hostId = `lx600-${code}-host`;
+  setSyncMsg('Đang kết nối…', '');
+  try { await loadPeerLib(); } catch (e) { setSyncMsg('Không tải được thư viện kết nối (cần Internet). Dữ liệu vẫn lưu trên máy này.', 'bad'); retry(8000); return; }
+  if (g !== gen) return;
+  isClient = false;
+  const host = new Peer(hostId); peer = host;
+  host.on('open', () => { if (g === gen) setSyncMsg(`Mã ${code}: đang chờ thiết bị kia mở trang…`, ''); });
+  host.on('connection', (c) => { if (g === gen) bindConn(c, g); });
+  host.on('disconnected', () => { if (g === gen) retry(3000); });
+  host.on('error', (e) => {
+    if (g !== gen) return;
+    if (e.type === 'unavailable-id') {
+      host.destroy(); isClient = true;
+      const cl = new Peer(); peer = cl;
+      cl.on('open', () => { if (g === gen) bindConn(cl.connect(hostId, { reliable: true }), g); });
+      cl.on('error', (er) => { if (g === gen) { setSyncMsg(er.type === 'peer-unavailable' ? 'Thiết bị kia vừa thoát, đang thử lại…' : 'Lỗi kết nối, đang thử lại…', 'bad'); retry(3000); } });
+      cl.on('disconnected', () => { if (g === gen) retry(3000); });
+    } else { setSyncMsg('Không kết nối được máy chủ báo hiệu, đang thử lại…', 'bad'); retry(5000); }
+  });
+}
+function sync(manual) {
+  if (!store.code) return;
+  if (conns.size) { conns.forEach(sendTo); if (manual) setSyncMsg('Đã gửi dữ liệu sang thiết bị kia.', 'ok'); }
+  else if (manual || !peer) startPeer();
+}
+let syncTimer = 0;
+function syncSoon() { if (!store.code) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(false), 300); }
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(false); });
-window.addEventListener('online', () => sync(false));
+window.addEventListener('online', () => { if (store.code && !conns.size) startPeer(); });
 
 if (validSess(store.sess)) resumeSession(); else { store.sess = null; render(); }
 sync(false);
