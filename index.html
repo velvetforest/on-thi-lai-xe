@@ -449,6 +449,9 @@ body.mc-page { font-size: 14px; padding: 16px; }
 .nav-n.is-ok { background: color-mix(in srgb, var(--ok) 20%, var(--mc-surface)); border-color: var(--ok); color: var(--ok); }
 .nav-n.is-bad { background: color-mix(in srgb, var(--bad) 20%, var(--mc-surface)); border-color: var(--bad); color: var(--bad); }
 .nav-n.is-cur { outline: 2px solid var(--mc-deep); outline-offset: 1px; }
+.sync-code { max-width: 90px; text-align: center; font: 700 20px var(--mono); letter-spacing: .2em; }
+.sync-st { font-size: 12px; color: var(--mc-muted); line-height: 1.5; }
+.sync-st.is-ok { color: var(--ok); } .sync-st.is-bad { color: var(--bad); }
 dialog#lb { border: 0; padding: 0; background: transparent; max-width: 96vw; max-height: 96vh; }
 dialog#lb::backdrop { background: rgba(0, 0, 0, .8); }
 dialog#lb img { display: block; max-width: 96vw; max-height: 92vh; background: #fff; border-radius: 10px; cursor: zoom-out; }
@@ -480,9 +483,20 @@ const CH = [
   ['VI', 'Giải thế sa hình và kỹ năng xử lý tình huống giao thông']
 ];
 const KEY = 'lx600-v1';
-let store = { res: {}, mark: {}, theme: 'dark' };
+/* Địa chỉ máy chủ đồng bộ (Firebase Realtime Database dạng https://TEN-DU-AN-default-rtdb.firebaseio.com).
+   Để trống thì nhập trong ô "Đồng bộ" trên trang chủ (lưu theo từng thiết bị). */
+const SYNC_URL = '';
+let store = { res: {}, mark: {}, ts: { r: {}, m: {} }, resetAt: 0, theme: 'dark', code: '', url: '', sess: null, prefs: null };
 try { const s = localStorage.getItem(KEY); if (s) store = Object.assign(store, JSON.parse(s)); } catch (e) {}
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {} };
+store.ts = store.ts || {}; store.ts.r = store.ts.r || {}; store.ts.m = store.ts.m || {};
+let saveFail = false;
+const save = () => {
+  try {
+    store.prefs = { chs: [...P.chs], filter: P.filter, shuffle: P.shuffle, exN: P.exN, exMin: P.exMin };
+    localStorage.setItem(KEY, JSON.stringify(store)); saveFail = false;
+  } catch (e) { saveFail = true; }
+};
+const saveData = () => { save(); syncSoon(); };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const norm = (s) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').toLowerCase();
@@ -491,6 +505,14 @@ root.dataset.theme = store.theme === 'light' ? 'light' : 'dark';
 $('#theme').onclick = () => { store.theme = root.dataset.theme === 'dark' ? 'light' : 'dark'; root.dataset.theme = store.theme; save(); };
 
 const P = { chs: new Set([0, 1, 2, 3, 4, 5]), filter: 'all', shuffle: false, exN: 35, exMin: 22 };
+if (store.prefs) {
+  const p = store.prefs;
+  if (Array.isArray(p.chs)) P.chs = new Set(p.chs.filter((x) => x >= 0 && x < 6));
+  if (['all', 'new', 'wrong', 'mark'].includes(p.filter)) P.filter = p.filter;
+  P.shuffle = !!p.shuffle;
+  if (+p.exN > 0) P.exN = +p.exN;
+  if (+p.exMin >= 0) P.exMin = Math.min(180, +p.exMin);
+}
 let S = null;     // current session
 let view = 'home';
 let timerId = 0;
@@ -522,7 +544,13 @@ function renderHome() {
     const n = QS.filter((q) => q.c === i).length;
     return `<button class="tab" type="button" data-ch="${i}" aria-selected="${P.chs.has(i)}" title="${esc(c[1])}">Chương ${c[0]}<small>${n}</small></button>`;
   }).join('');
-  $('#app').innerHTML = `
+  const rs = store.sess && validSess(store.sess) ? store.sess : null;
+  const resume = rs ? `<section class="mc-card studio-card"><div class="studio-body">
+    <p class="eyebrow">Bài đang làm dở</p>
+    <p class="viz-why">${rs.mode === 'exam' ? 'Thi thử' : 'Luyện tập'} · câu ${rs.i + 1}/${rs.list.length} · đã trả lời ${rs.ans.filter((x) => x >= 0).length}</p>
+    <div class="btn-row"><button class="mc-btn mc-btn--primary grow" type="button" id="resume">Tiếp tục</button><button class="mc-btn" type="button" id="drop">Bỏ bài này</button></div>
+  </div></section>` : '';
+  $('#app').innerHTML = resume + `
   <section class="mc-card studio-card"><div class="studio-body">
     <p class="eyebrow">Ôn thi sát hạch</p>
     <h1 class="viz-title">Bộ 600 câu hỏi lái xe cơ giới đường bộ</h1>
@@ -570,24 +598,46 @@ function renderHome() {
   </div></section>
 
   <section class="mc-card studio-card"><div class="studio-body">
+    <h2 class="sec-h">Đồng bộ giữa các thiết bị</h2>
+    <p class="note">Nhập cùng một mã 2 chữ số trên mỗi thiết bị để dùng chung kết quả và đánh dấu ★. Không có mật khẩu: ai nhập cùng mã sẽ thấy và ghi đè dữ liệu của bạn.</p>
+    <div class="field-row">
+      <input class="mc-field sync-code" id="scode" inputmode="numeric" maxlength="2" pattern="[0-9]*" placeholder="00" aria-label="Mã đồng bộ 2 chữ số" autocomplete="off">
+      <button class="mc-btn mc-btn--primary" type="button" id="sconn">${store.code ? 'Đồng bộ ngay' : 'Kết nối'}</button>
+      ${store.code ? '<button class="mc-btn" type="button" id="sdis">Ngắt</button>' : ''}
+    </div>
+    ${SYNC_URL ? '' : '<details class="picker"><summary>Địa chỉ máy chủ</summary><input class="mc-field" id="surl" type="url" placeholder="https://…firebaseio.com" autocomplete="off"></details>'}
+    <p class="sync-st" id="syncst"></p>
+  </div></section>
+
+  <section class="mc-card studio-card"><div class="studio-body">
     <h2 class="sec-h">Tìm câu hỏi</h2>
     <input class="mc-field" id="q" type="search" placeholder="Nhập số câu hoặc từ khóa, ví dụ: 400 hoặc cầu hẹp" autocomplete="off">
     <div class="hits" id="hits"></div>
     <div class="btn-row"><button class="mc-btn mc-btn--sm" type="button" id="reset">Xóa tiến độ đã lưu</button></div>
   </div></section>`;
+  const rb = $('#resume'); if (rb) { rb.onclick = resumeSession; $('#drop').onclick = () => { store.sess = null; S = null; save(); renderHome(); }; }
+  $('#scode').value = store.code;
+  const su = $('#surl'); if (su) su.value = store.url;
+  $('#sconn').onclick = () => {
+    const c = $('#scode').value.trim();
+    if (!/^\d{2}$/.test(c)) { setSyncMsg('Mã phải gồm đúng 2 chữ số.', 'bad'); return; }
+    store.code = c; if (su) store.url = su.value.trim(); save(); $('#sconn').textContent = 'Đồng bộ ngay'; sync(true);
+  };
+  const sd = $('#sdis'); if (sd) sd.onclick = () => { store.code = ''; save(); renderHome(); };
+  showSyncMsg();
   $('#filter').value = P.filter; $('#shuf').checked = P.shuffle; $('#exn').value = P.exN; $('#exm').value = P.exMin;
   const upd = () => { const n = pool().length; $('#cnt').textContent = `${n} câu thỏa điều kiện.`; $('#go').disabled = !n; $('#exam').disabled = !pool('all').length; };
   upd();
-  $('#chips').onclick = (e) => { const b = e.target.closest('[data-ch]'); if (!b) return; const i = +b.dataset.ch; P.chs.has(i) ? P.chs.delete(i) : P.chs.add(i); b.setAttribute('aria-selected', P.chs.has(i)); upd(); };
-  $('#all').onclick = () => { P.chs = new Set([0, 1, 2, 3, 4, 5]); renderHome(); };
-  $('#none').onclick = () => { P.chs = new Set(); renderHome(); };
-  $('#filter').onchange = (e) => { P.filter = e.target.value; upd(); };
-  $('#shuf').onchange = (e) => { P.shuffle = e.target.checked; };
-  $('#exn').onchange = (e) => { P.exN = +e.target.value; };
-  $('#exm').oninput = (e) => { P.exMin = Math.max(0, Math.min(180, +e.target.value || 0)); };
+  $('#chips').onclick = (e) => { const b = e.target.closest('[data-ch]'); if (!b) return; const i = +b.dataset.ch; P.chs.has(i) ? P.chs.delete(i) : P.chs.add(i); b.setAttribute('aria-selected', P.chs.has(i)); save(); upd(); };
+  $('#all').onclick = () => { P.chs = new Set([0, 1, 2, 3, 4, 5]); save(); renderHome(); };
+  $('#none').onclick = () => { P.chs = new Set(); save(); renderHome(); };
+  $('#filter').onchange = (e) => { P.filter = e.target.value; save(); upd(); };
+  $('#shuf').onchange = (e) => { P.shuffle = e.target.checked; save(); };
+  $('#exn').onchange = (e) => { P.exN = +e.target.value; save(); };
+  $('#exm').oninput = (e) => { P.exMin = Math.max(0, Math.min(180, +e.target.value || 0)); save(); };
   $('#go').onclick = () => { let l = pool(); if (P.shuffle) l = shuffle(l); startSession('practice', l, 0); };
   $('#exam').onclick = () => { const l = shuffle(pool('all')).slice(0, P.exN); startSession('exam', l, 0); };
-  $('#reset').onclick = () => { if (confirm('Xóa toàn bộ kết quả và đánh dấu đã lưu trên trình duyệt này?')) { store.res = {}; store.mark = {}; save(); renderHome(); } };
+  $('#reset').onclick = () => { if (confirm('Xóa toàn bộ kết quả và đánh dấu đã lưu (và trên các thiết bị đang đồng bộ cùng mã)?')) { store.res = {}; store.mark = {}; store.ts = { r: {}, m: {} }; store.resetAt = Date.now(); saveData(); renderHome(); } };
   let nz = null;
   $('#q').oninput = (e) => {
     const t = norm(e.target.value.trim()); const box = $('#hits');
@@ -601,6 +651,25 @@ function renderHome() {
 }
 
 /* ---------- session ---------- */
+function validSess(s) {
+  return s && (s.mode === 'practice' || s.mode === 'exam') && Array.isArray(s.list) && s.list.length && Array.isArray(s.ans) && s.ans.length === s.list.length
+    && s.list.every((x) => Number.isInteger(x) && x >= 0 && x < QS.length) && Number.isInteger(s.i) && s.i >= 0 && s.i < s.list.length;
+}
+function persistSess() {
+  store.sess = S && view !== 'home' ? { mode: S.mode, list: S.list, ans: S.ans, i: S.i, done: S.done, endAt: S.endAt, view } : store.sess;
+  save();
+}
+function resumeSession() {
+  const s = store.sess; if (!validSess(s)) { store.sess = null; save(); renderHome(); return; }
+  clearInterval(timerId);
+  S = { mode: s.mode, list: s.list, ans: s.ans, i: s.i, done: !!s.done, endAt: s.endAt || 0, navOpen: false };
+  view = s.view === 'result' ? 'result' : 'quiz';
+  if (S.endAt && !S.done) {
+    if (Date.now() >= S.endAt) { submit(); return; }
+    timerId = setInterval(tick, 1000);
+  }
+  render(true);
+}
 function startSession(mode, list, start) {
   clearInterval(timerId);
   S = { mode, list, ans: list.map(() => -1), i: start, done: false, endAt: 0, navOpen: false };
@@ -617,8 +686,11 @@ function tick() {
 }
 function record(i) {
   const q = QS[S.list[i]];
-  if (S.ans[i] >= 0) store.res[q.n] = S.ans[i] === q.a ? 1 : 0;
-  save();
+  if (S.ans[i] >= 0) {
+    const v = S.ans[i] === q.a ? 1 : 0;
+    if (store.res[q.n] !== v) { store.res[q.n] = v; store.ts.r[q.n] = Date.now(); }
+  }
+  saveData();
 }
 function submit() {
   clearInterval(timerId);
@@ -696,8 +768,8 @@ function renderQuiz() {
     ${isExam && !S.done ? '<div class="btn-row"><button class="mc-btn mc-btn--ok grow" type="button" id="submit">Nộp bài</button></div>' : ''}
     ${S.mode === 'practice' ? '<div class="btn-row"><button class="mc-btn mc-btn--sm" type="button" id="finish">Kết thúc và xem kết quả</button></div>' : ''}
   </div></section>`;
-  $('#home').onclick = () => { if (!S.done && S.mode === 'exam' && !confirm('Thoát sẽ hủy bài thi đang làm. Thoát?')) return; clearInterval(timerId); view = 'home'; render(true); };
-  $('#star').onclick = () => { store.mark[q.n] = !store.mark[q.n]; save(); render(); };
+  $('#home').onclick = () => { clearInterval(timerId); if (S.done) store.sess = null; view = 'home'; render(true); };
+  $('#star').onclick = () => { store.mark[q.n] = !store.mark[q.n]; store.ts.m[q.n] = Date.now(); saveData(); render(); };
   $('.opts').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b && !b.disabled) pick(+b.dataset.k); };
   $('#prev').onclick = () => go(-1);
   $('#next').onclick = () => go(1);
@@ -741,11 +813,11 @@ function renderResult() {
   $('#rv').onclick = () => { if (!S.done && S.mode === 'exam') S.done = true; S.i = 0; view = 'quiz'; render(true); };
   const rw = $('#rw'); if (rw) rw.onclick = () => startSession('practice', wrongIdx, 0);
   $('#again').onclick = () => { const l = S.mode === 'exam' ? shuffle(pool('all')).slice(0, P.exN) : (P.shuffle ? shuffle(S.list) : S.list); startSession(S.mode, l, 0); };
-  $('#home').onclick = () => { view = 'home'; render(true); };
+  $('#home').onclick = () => { store.sess = null; view = 'home'; render(true); };
 }
 
 function render(top) {
-  if (view === 'home') renderHome(); else if (view === 'quiz') renderQuiz(); else renderResult();
+  if (view === 'home') { renderHome(); save(); } else { if (view === 'quiz') renderQuiz(); else renderResult(); persistSess(); }
   if (top) window.scrollTo(0, 0);
 }
 document.addEventListener('keydown', (e) => {
@@ -755,7 +827,70 @@ document.addEventListener('keydown', (e) => {
   else if (e.key === 'ArrowLeft') go(-1);
 });
 $('#lb').onclick = () => $('#lb').close();
-render();
+
+/* ---------- sync ---------- */
+let syncMsg = null, syncBusy = false, syncAgain = false, syncTimer = 0;
+function setSyncMsg(t, kind) { syncMsg = { t, kind }; showSyncMsg(); }
+function showSyncMsg() {
+  const el = $('#syncst'); if (!el) return;
+  const m = syncMsg || (store.code ? { t: `Đang dùng mã ${store.code}.`, kind: '' } : { t: 'Chưa kết nối.', kind: '' });
+  el.textContent = m.t; el.className = 'sync-st' + (m.kind ? ' is-' + m.kind : '');
+}
+const syncBase = () => (SYNC_URL || store.url || '').trim().replace(/\/+$/, '');
+function mergeRemote(r) {
+  const rt = r.ts || {}, reset = Math.max(store.resetAt || 0, +r.resetAt || 0);
+  let changed = reset !== (store.resetAt || 0);
+  store.resetAt = reset;
+  for (const [f, t] of [['res', 'r'], ['mark', 'm']]) {
+    const rv = r[f] || {}, rts = rt[t] || {};
+    for (const k of new Set([...Object.keys(store[f]), ...Object.keys(rv)])) {
+      const lt = store.ts[t][k] || 0, tt = rts[k] || 0;
+      let v = store[f][k], at = lt;
+      if (tt > lt) { v = rv[k]; at = tt; }
+      if (at < reset) { v = undefined; at = 0; }
+      if (v === undefined) { if (k in store[f]) { delete store[f][k]; delete store.ts[t][k]; changed = true; } continue; }
+      if (store[f][k] !== v) changed = true;
+      store[f][k] = v; if (at) store.ts[t][k] = at; else delete store.ts[t][k];
+    }
+  }
+  return changed;
+}
+async function sync(manual) {
+  if (!store.code) return;
+  const base = syncBase();
+  if (!base) { if (manual) setSyncMsg('Chưa có địa chỉ máy chủ đồng bộ.', 'bad'); return; }
+  if (syncBusy) { syncAgain = true; return; }
+  syncBusy = true;
+  const url = `${base}/lx600/${store.code}.json`;
+  try {
+    if (manual) setSyncMsg('Đang đồng bộ…', '');
+    const g = await fetch(url, { cache: 'no-store' });
+    if (!g.ok) throw new Error('GET ' + g.status);
+    const body = await g.json();
+    let changed = false;
+    if (body && typeof body.d === 'string') { try { changed = mergeRemote(JSON.parse(body.d)); } catch (e) {} }
+    const d = JSON.stringify({ res: store.res, mark: store.mark, ts: store.ts, resetAt: store.resetAt });
+    if (!body || body.d !== d) {
+      const p = await fetch(url, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ d, t: Date.now() }) });
+      if (!p.ok) throw new Error('PUT ' + p.status);
+    }
+    save();
+    const n = Object.keys(store.res).length;
+    setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · ${n} câu đã làm.`, 'ok');
+    if (changed && view === 'home' && !document.activeElement.matches('input,select')) renderHome();
+  } catch (e) {
+    setSyncMsg('Không đồng bộ được (kiểm tra mạng hoặc địa chỉ máy chủ). Dữ liệu vẫn được lưu trên máy này.', 'bad');
+  } finally {
+    syncBusy = false;
+    if (syncAgain) { syncAgain = false; syncSoon(); }
+  }
+}
+function syncSoon() { if (!store.code) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(false), 1500); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync(false); });
+window.addEventListener('online', () => sync(false));
+
+if (validSess(store.sess)) resumeSession(); else { store.sess = null; render(); }
+sync(false);
 </script>
 </body>
 </html>
