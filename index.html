@@ -748,12 +748,6 @@ function renderQuiz() {
     } else if (k === a) cls += ' is-picked';
     return `<button class="${cls}" type="button" data-k="${k}" ${rev && S.mode === 'practice' || S.done ? 'disabled' : ''} aria-pressed="${k === a}"><span class="opt-n">${k + 1}</span><span>${esc(t)}</span><span class="opt-i" aria-hidden="true">${icon}</span></button>`;
   }).join('');
-  let verdict = '';
-  if (rev) {
-    if (a < 0) verdict = `<div class="verdict tone tone-warn"><b>Bạn chưa chọn.</b> Đáp án đúng là <b>${q.a + 1}</b>.</div>`;
-    else if (a === q.a) verdict = `<div class="verdict tone tone-good"><b>Chính xác.</b> Đáp án đúng là ${q.a + 1}.</div>`;
-    else verdict = `<div class="verdict tone tone-bad"><b>Chưa đúng.</b> Bạn chọn ${a + 1}, đáp án đúng là <b>${q.a + 1}</b>.</div>`;
-  }
   const grid = S.list.map((qi, j) => {
     const r = revealed(j) || S.mode === 'exam' && S.ans[j] >= 0;
     let c = 'nav-n';
@@ -781,7 +775,6 @@ function renderQuiz() {
     <h2 class="q-text">${esc(q.q)}</h2>
     ${figs ? `<div class="figs">${figs}</div>` : ''}
     <div class="opts">${opts}</div>
-    ${verdict}
     ${S.mode === 'practice' && a < 0 && store.res[q.n] !== undefined ? `<p class="note">Câu này đã làm trước đó (${store.res[q.n] === 1 ? 'đúng' : 'sai'}). Chọn lại đáp án nếu muốn làm lại.</p>` : ''}
     <div class="btn-row">
       <button class="mc-btn" type="button" id="prev" ${i === 0 ? 'disabled' : ''}>Trước</button>
