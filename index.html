@@ -759,6 +759,8 @@ function renderQuiz() {
     let c = 'nav-n';
     if (S.ans[j] >= 0) c += ' is-ans';
     if (revealed(j) && S.ans[j] >= 0) c += S.ans[j] === QS[qi].a ? ' is-ok' : ' is-bad';
+    const old = S.mode === 'practice' && S.ans[j] < 0 ? store.res[QS[qi].n] : undefined;
+    if (old !== undefined) c += old === 1 ? ' is-ok' : ' is-bad';
     if (j === i) c += ' is-cur';
     return `<button class="${c}" type="button" data-j="${j}" aria-label="Câu ${QS[qi].n}">${QS[qi].n}</button>`;
   }).join('');
@@ -780,6 +782,7 @@ function renderQuiz() {
     ${figs ? `<div class="figs">${figs}</div>` : ''}
     <div class="opts">${opts}</div>
     ${verdict}
+    ${S.mode === 'practice' && a < 0 && store.res[q.n] !== undefined ? `<p class="note">Câu này đã làm trước đó (${store.res[q.n] === 1 ? 'đúng' : 'sai'}). Chọn lại đáp án nếu muốn làm lại.</p>` : ''}
     <div class="btn-row">
       <button class="mc-btn" type="button" id="prev" ${i === 0 ? 'disabled' : ''}>Trước</button>
       <button class="mc-btn mc-btn--primary grow" type="button" id="next">${i === total - 1 ? (isExam && !S.done ? 'Đến cuối' : 'Xem kết quả') : 'Tiếp'}</button>
@@ -904,6 +907,7 @@ function bindConn(c, g) {
     save();
     setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · máy này ${mine}, máy kia ${theirs} → gộp được ${Object.keys(store.res).length} câu đã làm.`, 'ok');
     if (changed && view === 'home' && !document.activeElement.matches('input,select')) renderHome();
+    else if (changed && view === 'quiz') render();
     if (snapshot() !== m.d) sendTo(c);
   });
   const gone = () => {
