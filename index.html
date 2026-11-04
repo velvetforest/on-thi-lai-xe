@@ -393,6 +393,7 @@ body.mc-page { font-size: 14px; padding: 16px; }
 .brand { font-family: var(--display); font-size: 18px; color: var(--mc-deep); margin: 0; font-weight: 500; }
 .mc-btn { min-height: 44px; }
 .mc-btn--sm { min-height: 36px; padding: 6px 12px; }
+a.mc-btn { display: inline-flex; align-items: center; text-decoration: none; }
 .mc-btn--ok { border-color: var(--ok); color: var(--ok); }
 .mc-btn:focus-visible, .opt:focus-visible, .tab:focus-visible, .nav-n:focus-visible, .fig-btn:focus-visible { outline: 2px solid var(--mc-accent); outline-offset: 2px; }
 .btn-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -780,6 +781,7 @@ function renderQuiz() {
       <button class="mc-btn" type="button" id="prev" ${i === 0 ? 'disabled' : ''}>Trước</button>
       <button class="mc-btn mc-btn--primary grow" type="button" id="next">${i === total - 1 ? (isExam && !S.done ? 'Đến cuối' : 'Xem kết quả') : 'Tiếp'}</button>
       ${S.mode === 'practice' && rev ? '<button class="mc-btn mc-btn--sm" type="button" id="redo">Làm lại câu này</button>' : ''}
+      ${rev ? `<a class="mc-btn mc-btn--sm why" id="why" href="https://www.google.com/search?q=${encodeURIComponent('Giải thích tại sao ' + q.q.replace(/\s+/g, ' ').trim().replace(/[?.:\s]+$/, '') + ' ' + q.o[q.a])}" target="_blank" rel="noopener noreferrer">Giải thích tại sao</a>` : ''}
     </div>
     ${isExam && !S.done ? '<div class="btn-row"><button class="mc-btn mc-btn--ok grow" type="button" id="submit">Nộp bài</button></div>' : ''}
     ${S.mode === 'practice' ? '<div class="btn-row"><button class="mc-btn mc-btn--sm" type="button" id="finish">Kết thúc và xem kết quả</button></div>' : ''}
