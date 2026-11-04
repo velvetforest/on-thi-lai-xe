@@ -604,6 +604,8 @@ function renderHome() {
       ${store.code ? '<button class="mc-btn" type="button" id="sdis">Ngắt</button>' : ''}
     </div>
     <p class="sync-st" id="syncst"></p>
+    <div class="btn-row"><button class="mc-btn mc-btn--sm" type="button" id="xexp">Sao chép dữ liệu</button><button class="mc-btn mc-btn--sm" type="button" id="ximp">Dán dữ liệu từ máy kia</button></div>
+    <p class="note">Cách thủ công nếu không nối trực tiếp được: sao chép dữ liệu ở máy này, gửi sang máy kia (Zalo, ghi chú…) rồi dán vào. Hai bên sẽ được gộp, câu nào nhiều hơn vẫn giữ.</p>
   </div></section>
 
   <section class="mc-card studio-card"><div class="studio-body">
@@ -621,6 +623,22 @@ function renderHome() {
   };
   const sd = $('#sdis'); if (sd) sd.onclick = () => { store.code = ''; save(); stopPeer(); syncMsg = null; renderHome(); };
   showSyncMsg();
+  $('#xexp').onclick = async () => {
+    const t = 'LX1:' + btoa(snapshot());
+    try { await navigator.clipboard.writeText(t); setSyncMsg('Đã sao chép. Mở trang trên máy kia và bấm "Dán dữ liệu".', 'ok'); }
+    catch (e) { prompt('Sao chép đoạn mã này (Ctrl+C):', t); }
+  };
+  $('#ximp').onclick = () => {
+    const t = (prompt('Dán đoạn dữ liệu đã sao chép từ máy kia:') || '').trim();
+    if (!t) return;
+    try {
+      const rd = JSON.parse(atob(t.replace(/^LX1:/, '')));
+      const mine = Object.keys(store.res).length, theirs = Object.keys(rd.res || {}).length;
+      mergeRemote(rd); saveData();
+      setSyncMsg(`Đã gộp: máy này ${mine}, dữ liệu dán ${theirs} → ${Object.keys(store.res).length} câu đã làm.`, 'ok');
+      renderHome(); showSyncMsg();
+    } catch (e) { setSyncMsg('Đoạn dữ liệu không hợp lệ.', 'bad'); }
+  };
   $('#filter').value = P.filter; $('#shuf').checked = P.shuffle; $('#exn').value = P.exN; $('#exm').value = P.exMin;
   const upd = () => { const n = pool().length; $('#cnt').textContent = `${n} câu thỏa điều kiện.`; $('#go').disabled = !n; $('#exam').disabled = !pool('all').length; };
   upd();
@@ -849,7 +867,7 @@ function mergeRemote(r) {
     for (const k of new Set([...Object.keys(store[f]), ...Object.keys(rv)])) {
       const lt = store.ts[t][k] || 0, tt = rts[k] || 0;
       let v = store[f][k], at = lt;
-      if (tt > lt) { v = rv[k]; at = tt; }
+      if (tt > lt || (!(k in store[f]) && k in rv)) { v = rv[k]; at = tt; }
       if (at < reset) { v = undefined; at = 0; }
       if (v === undefined) { if (k in store[f]) { delete store[f][k]; delete store.ts[t][k]; changed = true; } continue; }
       if (store[f][k] !== v) changed = true;
@@ -881,10 +899,10 @@ function bindConn(c, g) {
   });
   c.on('data', (m) => {
     if (g !== gen || !m || typeof m.d !== 'string') return;
-    let changed = false;
-    try { changed = mergeRemote(JSON.parse(m.d)); } catch (e) { return; }
+    let changed = false, mine = Object.keys(store.res).length, theirs = 0;
+    try { const rd = JSON.parse(m.d); theirs = Object.keys(rd.res || {}).length; changed = mergeRemote(rd); } catch (e) { return; }
     save();
-    setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · ${Object.keys(store.res).length} câu đã làm.`, 'ok');
+    setSyncMsg(`Đã đồng bộ lúc ${new Date().toLocaleTimeString('vi-VN')} · máy này ${mine}, máy kia ${theirs} → gộp được ${Object.keys(store.res).length} câu đã làm.`, 'ok');
     if (changed && view === 'home' && !document.activeElement.matches('input,select')) renderHome();
     if (snapshot() !== m.d) sendTo(c);
   });
@@ -895,6 +913,9 @@ function bindConn(c, g) {
     if (isClient) retry(2000);
   };
   c.on('close', gone); c.on('error', gone);
+}
+function reconnectSig(pr, g) {
+  setTimeout(() => { if (g !== gen) return; try { pr.reconnect(); } catch (e) { if (!conns.size) retry(3000); } }, 2000);
 }
 async function startPeer() {
   stopPeer();
@@ -907,15 +928,19 @@ async function startPeer() {
   const host = new Peer(hostId); peer = host;
   host.on('open', () => { if (g === gen) setSyncMsg(`Mã ${code}: đang chờ thiết bị kia mở trang…`, ''); });
   host.on('connection', (c) => { if (g === gen) bindConn(c, g); });
-  host.on('disconnected', () => { if (g === gen) retry(3000); });
+  host.on('disconnected', () => { if (g === gen) reconnectSig(host, g); });
   host.on('error', (e) => {
     if (g !== gen) return;
     if (e.type === 'unavailable-id') {
       host.destroy(); isClient = true;
       const cl = new Peer(); peer = cl;
-      cl.on('open', () => { if (g === gen) bindConn(cl.connect(hostId, { reliable: true }), g); });
+      cl.on('open', () => {
+        if (g !== gen) return;
+        const cc = cl.connect(hostId, { reliable: true }); bindConn(cc, g);
+        setTimeout(() => { if (g === gen && !cc.open) { setSyncMsg('Thấy thiết bị kia nhưng chưa nối được (hay gặp khi 2 máy khác mạng Wi-Fi/4G). Dùng "Sao chép / Dán dữ liệu" bên dưới để đồng bộ thủ công.', 'bad'); retry(6000); } }, 15000);
+      });
       cl.on('error', (er) => { if (g === gen) { setSyncMsg(er.type === 'peer-unavailable' ? 'Thiết bị kia vừa thoát, đang thử lại…' : 'Lỗi kết nối, đang thử lại…', 'bad'); retry(3000); } });
-      cl.on('disconnected', () => { if (g === gen) retry(3000); });
+      cl.on('disconnected', () => { if (g === gen) reconnectSig(cl, g); });
     } else { setSyncMsg('Không kết nối được máy chủ báo hiệu, đang thử lại…', 'bad'); retry(5000); }
   });
 }
