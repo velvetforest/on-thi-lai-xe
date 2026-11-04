@@ -483,7 +483,7 @@ const CH = [
   ['VI', 'Giải thế sa hình và kỹ năng xử lý tình huống giao thông']
 ];
 const KEY = 'lx600-v1';
-let store = { res: {}, mark: {}, ts: { r: {}, m: {} }, resetAt: 0, theme: 'dark', code: '', sess: null, prefs: null };
+let store = { res: {}, mark: {}, ts: { r: {}, m: {} }, resetAt: 0, theme: 'dark', code: '', last: null, sess: null, prefs: null };
 try { const s = localStorage.getItem(KEY); if (s) store = Object.assign(store, JSON.parse(s)); } catch (e) {}
 store.ts = store.ts || {}; store.ts.r = store.ts.r || {}; store.ts.m = store.ts.m || {};
 let saveFail = false;
@@ -582,6 +582,7 @@ function renderHome() {
     <p class="note" id="cnt"></p>
     <h2 class="sec-h">2. Luyện tập hoặc thi thử</h2>
     <div class="btn-row"><button class="mc-btn mc-btn--primary grow" type="button" id="go">Luyện tập</button></div>
+    ${store.last ? `<div class="btn-row"><button class="mc-btn grow" type="button" id="cont">Làm tiếp từ sau câu ${store.last.n}</button></div>` : ''}
     <div class="ctl-row">
       <label class="field-lbl ctl">Số câu thi thử
         <select class="mc-field" id="exn">${[10, 20, 30, 35, 50, 100].map((n) => `<option value="${n}">${n} câu</option>`).join('')}</select>
@@ -630,9 +631,15 @@ function renderHome() {
   $('#shuf').onchange = (e) => { P.shuffle = e.target.checked; save(); };
   $('#exn').onchange = (e) => { P.exN = +e.target.value; save(); };
   $('#exm').oninput = (e) => { P.exMin = Math.max(0, Math.min(180, +e.target.value || 0)); save(); };
+  const ct = $('#cont');
+  if (ct) ct.onclick = () => {
+    const l = pool('all'); if (!l.length) return;
+    const at = l.findIndex((i) => QS[i].n > store.last.n);
+    startSession('practice', l, at < 0 ? 0 : at);
+  };
   $('#go').onclick = () => { let l = pool(); if (P.shuffle) l = shuffle(l); startSession('practice', l, 0); };
   $('#exam').onclick = () => { const l = shuffle(pool('all')).slice(0, P.exN); startSession('exam', l, 0); };
-  $('#reset').onclick = () => { if (confirm('Xóa toàn bộ kết quả và đánh dấu đã lưu (và trên các thiết bị đang đồng bộ cùng mã)?')) { store.res = {}; store.mark = {}; store.ts = { r: {}, m: {} }; store.resetAt = Date.now(); saveData(); renderHome(); } };
+  $('#reset').onclick = () => { if (confirm('Xóa toàn bộ kết quả và đánh dấu đã lưu (và trên các thiết bị đang đồng bộ cùng mã)?')) { store.res = {}; store.mark = {}; store.ts = { r: {}, m: {} }; store.resetAt = Date.now(); store.last = null; saveData(); renderHome(); } };
   let nz = null;
   $('#q').oninput = (e) => {
     const t = norm(e.target.value.trim()); const box = $('#hits');
@@ -700,7 +707,7 @@ function revealed(i) { return S.mode === 'practice' ? S.ans[i] >= 0 : S.done; }
 function pick(k) {
   const i = S.i, q = QS[S.list[i]];
   if (k < 0 || k >= q.o.length) return;
-  if (S.mode === 'practice') { if (S.ans[i] >= 0) return; S.ans[i] = k; record(i); }
+  if (S.mode === 'practice') { if (S.ans[i] >= 0) return; S.ans[i] = k; store.last = { n: q.n, t: Date.now() }; record(i); }
   else { if (S.done) return; S.ans[i] = S.ans[i] === k ? -1 : k; }
   render();
 }
@@ -835,6 +842,8 @@ function mergeRemote(r) {
   const rt = r.ts || {}, reset = Math.max(store.resetAt || 0, +r.resetAt || 0);
   let changed = reset !== (store.resetAt || 0);
   store.resetAt = reset;
+  if (store.last && store.last.t < reset) { store.last = null; changed = true; }
+  if (r.last && r.last.t >= reset && r.last.t > (store.last ? store.last.t : 0)) { store.last = r.last; changed = true; }
   for (const [f, t] of [['res', 'r'], ['mark', 'm']]) {
     const rv = r[f] || {}, rts = rt[t] || {};
     for (const k of new Set([...Object.keys(store[f]), ...Object.keys(rv)])) {
@@ -849,7 +858,7 @@ function mergeRemote(r) {
   }
   return changed;
 }
-const snapshot = () => JSON.stringify({ res: store.res, mark: store.mark, ts: store.ts, resetAt: store.resetAt });
+const snapshot = () => JSON.stringify({ res: store.res, mark: store.mark, ts: store.ts, resetAt: store.resetAt, last: store.last });
 let peer = null, gen = 0, conns = new Set(), retryT = 0, libP = null, isClient = false;
 const loadPeerLib = () => libP || (libP = new Promise((ok, no) => {
   if (window.Peer) return ok();
