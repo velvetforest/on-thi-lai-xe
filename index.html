@@ -739,7 +739,7 @@ function go(d) {
 
 function renderQuiz() {
   const i = S.i, q = QS[S.list[i]], a = S.ans[i], rev = revealed(i), total = S.list.length;
-  const answered = S.ans.filter((x) => x >= 0).length;
+  const answered = S.ans.filter((x, j) => x >= 0 || (S.mode === 'practice' && store.res[QS[S.list[j]].n] !== undefined)).length;
   const figs = q.m.map((id) => `<button class="fig-btn" type="button" data-img="${id}" aria-label="Phóng to ảnh"><img src="${IMGS[id]}" alt="Hình minh họa của câu ${q.n}"></button>`).join('');
   const opts = q.o.map((t, k) => {
     let cls = 'opt', icon = '';
